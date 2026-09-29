@@ -1,6 +1,6 @@
 {
-  "name": "근무기록 · Daytime & OT",
-  "short_name": "근무기록",
+  "name": "Work Log · Daytime & OT",
+  "short_name": "Work Log",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -8,8 +8,8 @@ const TOKEN = 'change-me-2026';
 
 const REC_SHEET = 'Records';
 const SET_SHEET = 'Settlements';
-const REC_COLS = ['id','type','date','weekday','start','end','minutes','hours','status','note','settlementId','text','updatedAt'];
-const SET_COLS = ['id','type','from','to','count','minutes','hours','createdAt','text'];
+const REC_COLS = ['id','type','date','weekday','start','end','minutes','hours','status','note','settlementId','text','createdAt','updatedAt'];
+const SET_COLS = ['id','type','from','to','count','minutes','hours','rate','amount','uptoId','createdAt','text'];
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
@@ -60,17 +60,20 @@ function readAll(name, cols) {
 function upsert(name, cols, items) {
   if (!items.length) return;
   const sh = sheet_(name, cols);
+  // header-aware: add any missing columns so older sheets keep working
+  let head = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getDisplayValues()[0].filter(String);
+  cols.forEach(c => { if (head.indexOf(c) < 0) { head.push(c); sh.getRange(1, head.length).setValue(c).setFontWeight('bold'); } });
   const last = sh.getLastRow();
   const ids = last > 1 ? sh.getRange(2, 1, last - 1, 1).getDisplayValues().map(r => r[0]) : [];
   const index = {};
   ids.forEach((id, i) => index[id] = i + 2);
   const appends = [];
   items.forEach(it => {
-    const row = cols.map(c => it[c] === undefined || it[c] === null ? '' : String(it[c]));
-    if (index[it.id]) sh.getRange(index[it.id], 1, 1, cols.length).setValues([row]);
+    const row = head.map(c => it[c] === undefined || it[c] === null ? '' : String(it[c]));
+    if (index[it.id]) sh.getRange(index[it.id], 1, 1, head.length).setValues([row]);
     else { appends.push(row); index[it.id] = -1; }
   });
-  if (appends.length) sh.getRange(sh.getLastRow() + 1, 1, appends.length, cols.length).setValues(appends);
+  if (appends.length) sh.getRange(sh.getLastRow() + 1, 1, appends.length, head.length).setNumberFormat('@').setValues(appends);
 }
 
 function json(o) {
