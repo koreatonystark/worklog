@@ -133,6 +133,9 @@ header{padding:calc(env(safe-area-inset-top) + 10px) 16px 6px}
 .rec.t .d::after{content:" •";color:var(--acc)}
 .rec .l.off{color:var(--tx3)}.rec .l.early{color:var(--warn)}.rec .l.ot{color:var(--ok)}.rec .l.auto{color:var(--tx3)}
 .rec:active{background:var(--surf2)}
+.rec,.block{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;transition:background .15s,transform .15s}
+.rec.pressing,.block.pressing{background:color-mix(in srgb,var(--bad) 14%,var(--surf2));transform:scale(.985)}
+.lhint{font-size:11px;color:var(--tx3);text-align:center;margin-top:8px}
 .empty{padding:22px;text-align:center;color:var(--tx3);font-family:Pretendard,system-ui;font-size:13px}
 
 /* settlement page */
@@ -284,6 +287,9 @@ function applyOp(st, op){
     const ids = new Set(op.ids);
     st.records.forEach(r => { if (ids.has(r.id) && !r.settlementId) r.settlementId = op.s.id; });
     st.settlements.push(op.s);
+  } else if (op.t === 'unsettle') {          // 정산 삭제: unlock = 기록 되돌림, purge = 기록까지 삭제
+    st.settlements = st.settlements.filter(s => s.id !== op.id);
+    st.records.forEach(r => { if (r.settlementId === op.id) { r.settlementId = ''; if (op.mode === 'purge') { r.type = 'DEL'; r.hours = 0; } r.updatedAt = now; } });
   } else if (op.t === 'config') {            // Work는 id 기준 병합 (덮어쓰기 X)
     (op.works || []).forEach(w => { const i = st.works.findIndex(x => x.id === w.id); if (i >= 0) st.works[i] = w; else st.works.push(w); });
     st.config = Object.assign({}, st.config, op.config);
@@ -364,7 +370,8 @@ function kind(r, w){
 const KIND_KO = { off:'OFF', early:'조퇴', ot:'연장', auto:'자동', work:'완료' };
 const KIND_TXT = { ko:{ off:'OFF', early:'조퇴', ot:'연장', auto:'근무', work:'근무' },
                    en:{ off:'OFF', early:'Early', ot:'Overtime', auto:'Work', work:'Work' } };
-const unsettled = w => view.records.filter(r => r.workId === w.id && !r.settlementId).sort((a, b) => a.date < b.date ? 1 : -1);
+const live = r => r.type !== 'DEL';
+const unsettled = w => view.records.filter(r => r.workId === w.id && !r.settlementId && live(r)).sort((a, b) => a.date < b.date ? 1 : -1);
 function totals(recs){
   const t = { workDays:0, offDays:0, totalHours:0 };
   recs.forEach(r => { if (r.type === 'OFF') t.offDays++; else { t.workDays++; t.totalHours += +r.hours; } });
@@ -383,7 +390,7 @@ function render(){
 function renderTabs(w){
   const t = todayStr();
   $('#tabs').innerHTML = activeWorks().map(x => {
-    const done = view.records.some(r => r.id === x.id + '_' + t);
+    const done = view.records.some(r => r.id === x.id + '_' + t && live(r));
     return `<button class="tab ${x.id === w.id ? 'on' : ''}" style="--c:${x.color}" data-w="${x.id}"><b style="background:${x.color}"></b>${esc(x.name)}${done ? '<span class="chk">✓</span>' : ''}</button>`;
   }).join('');
 }
@@ -406,7 +413,7 @@ function parseTyped(s){
   return { H, M, hours: H + M/60, valid, disp };
 }
 function renderEntry(w){
-  const t = todayStr(), rec = view.records.find(r => r.id === w.id + '_' + t);
+  const t = todayStr(), rec = view.records.find(r => r.id === w.id + '_' + t && live(r));
   const tp = typed[w.id] || '', p = parseTyped(tp);
   const workday = (w.days || []).includes(dowU(t));
   let cls = '', inner = '', info = '';
@@ -442,7 +449,8 @@ function renderEntry(w){
       <button class="btn sec" data-act="off" ${rec ? 'disabled' : ''}>Day off</button>
     </div>
     <div class="lhead"><span>미정산 기록 <b>${recs.length}건</b> · 합계 <b>${fmtH(tt.totalHours)}h</b></span><span class="lbtns"><button data-act="cal">📅 달력</button><button data-act="add">+ 추가</button></span></div>
-    <div class="list">${lines || '<div class="empty">아직 기록이 없습니다</div>'}</div>`;
+    <div class="list">${lines || '<div class="empty">아직 기록이 없습니다</div>'}</div>
+    ${lines ? '<div class="lhint">누르면 수정 · 길게 누르면 삭제</div>' : ''}`;
 }
 
 const LOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
@@ -470,13 +478,14 @@ function renderSettle(w){
         <span class="lk">${LOCK_SVG}</span>
         <span class="m"><b>${s.fromDate.slice(5).replace('-', '/')} ~ ${s.toDate.slice(5).replace('-', '/')} · ${fmtH(s.totalHours)}h</b><span>#${hist.length - i} · 근무 ${s.workDays}일 · OFF ${s.offDays}일</span></span>
         <span class="a">${money(s.amount, s.currency)}</span>
-      </button>`).join('') || '<div class="card empty">정산 완료된 블럭이 여기에 쌓입니다</div>'}</div>`;
+      </button>`).join('') || '<div class="card empty">정산 완료된 블럭이 여기에 쌓입니다</div>'}</div>
+    ${hist.length ? '<div class="lhint">누르면 정산 내역 · 길게 누르면 삭제</div>' : ''}`;
 }
 
 /* ============ 입력 동작 ============ */
 function pressKey(k){
   const w = curWork(), t = todayStr();
-  if (view.records.some(r => r.id === w.id + '_' + t)) return;
+  if (view.records.some(r => r.id === w.id + '_' + t && live(r))) return;
   let s = typed[w.id] || '';
   if (k === 'DEL') s = '';
   else if (k === '⌫') s = s.slice(0, -1);
@@ -501,7 +510,7 @@ function popCenter(){ const c = document.querySelector('.center'); if (c) { c.cl
 function openEdit(id, addMode, presetDate, back){
   const done = () => back ? back() : closeModal();
   const w = curWork();
-  const r = id ? view.records.find(x => x.id === id) : null;
+  const r = id ? view.records.find(x => x.id === id && live(x)) : null;
   if (r && r.settlementId) { toast('정산된 기록은 수정할 수 없어요'); return; }
   const date = r ? r.date : (presetDate || addDays(todayStr(), -1));
   openModal(`
@@ -512,10 +521,11 @@ function openEdit(id, addMode, presetDate, back){
     <input type="text" id="eH" inputmode="decimal" placeholder="예: 8 · 7:30 · 7.5" value="${r && r.type !== 'OFF' ? fmtH(r.hours) : (addMode ? fmtH(w.hours) : '')}">
     <div class="hint">기본 ${fmtH(w.hours)}h · OFF로 바꾸려면 아래 버튼</div>
     <div class="btns"><button class="btn sec" data-m="off">OFF 처리</button><button class="btn pri" data-m="save">저장</button></div>
-    <div class="btns" style="margin-top:8px"><button class="btn ghost" data-m="x">취소</button></div>`, sheet => {
+    <div class="btns" style="margin-top:8px">${r ? '<button class="btn danger" data-m="del">삭제</button>' : ''}<button class="btn ghost" data-m="x">취소</button></div>`, sheet => {
     sheet.onclick = e => {
       const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return;
       if (m === 'x') return done();
+      if (m === 'del') return deleteRecord(r.id, back);
       const d = addMode ? $('#eD').value : r.date;
       if (!d) return toast('날짜를 선택하세요');
       const rid = w.id + '_' + d, ex = view.records.find(x => x.id === rid);
@@ -537,7 +547,7 @@ function openCalendar(ym){
   const [Y, M] = ym.split('-').map(Number);
   const first = ym + '-01', startDow = jsDow(first);
   const days = new Date(Date.UTC(Y, M, 0)).getUTCDate();
-  const recs = {}; view.records.filter(r => r.workId === w.id && r.date.startsWith(ym)).forEach(r => recs[r.date] = r);
+  const recs = {}; view.records.filter(r => r.workId === w.id && r.date.startsWith(ym) && live(r)).forEach(r => recs[r.date] = r);
   let cells = '', sumH = 0, wd = 0, off = 0;
   for (let i = 0; i < startDow; i++) cells += '<div class="c e"></div>';
   for (let d = 1; d <= days; d++) {
@@ -619,10 +629,11 @@ function showSettlement(id){
     <div class="sd">${esc(s.workName)} · ${s.fromDate} ~ ${s.toDate}</div>
     <pre class="txt" id="sTxt">${esc(s.text)}</pre>
     <div class="btns"><button class="btn sec" data-m="copy">복사</button><button class="btn pri" data-m="mail">이메일 보내기</button></div>
-    <div class="btns" style="margin-top:8px"><button class="btn ghost" data-m="x">닫기</button></div>`, sheet => {
+    <div class="btns" style="margin-top:8px"><button class="btn danger" data-m="del">정산 삭제</button><button class="btn ghost" data-m="x">닫기</button></div>`, sheet => {
     sheet.onclick = async e => {
       const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return;
       if (m === 'x') return closeModal();
+      if (m === 'del') return deleteSettlement(s.id);
       if (m === 'copy') { await copyText(s.text); toast('복사됨 — 붙여넣기 하세요'); }
       if (m === 'mail') {
         const subj = (L() === 'en' ? `[${s.workName}] Work Hours ${s.fromDate} ~ ${s.toDate}` : `[${s.workName}] 근무 정산 ${s.fromDate} ~ ${s.toDate}`);
@@ -631,6 +642,51 @@ function showSettlement(id){
     };
   });
 }
+/* ============ 삭제 ============ */
+async function deleteRecord(id, back){
+  const r = view.records.find(x => x.id === id && live(x)); if (!r) return;
+  if (r.settlementId) return toast('🔒 정산된 기록은 정산을 먼저 삭제하세요');
+  const w = view.works.find(x => x.id === r.workId) || curWork();
+  const val = r.type === 'OFF' ? 'OFF' : fmtH(r.hours) + 'h';
+  if (!(await ask('이 기록을 삭제할까요?', `${esc(w.name)} · ${dayLabel(r.date)} · ${val}<br>삭제한 날은 자동입력되지 않습니다. 다시 입력하면 복구돼요.`, '삭제'))) return back ? back() : undefined;
+  commit({ t:'rec', r:{ id:r.id, workId:r.workId, date:r.date, hours:0, type:'DEL' } });
+  if (r.workId === curWork().id && r.date === todayStr()) typed[r.workId] = '';
+  buzz(20); toast('삭제됨');
+  if (back) back();
+}
+function deleteSettlement(id){
+  const s = view.settlements.find(x => x.id === id); if (!s) return;
+  const n = view.records.filter(r => r.settlementId === id).length;
+  openModal(`
+    <h3>정산을 삭제할까요?</h3>
+    <div class="sd">${esc(s.workName)} · ${s.fromDate} ~ ${s.toDate} · ${fmtH(s.totalHours)}h · ${money(s.amount, s.currency)}</div>
+    <button class="btn sec" style="width:100%" data-m="unlock">정산만 취소 — 기록 ${n}건은 미정산으로 되돌리기</button>
+    <button class="btn danger" style="width:100%;margin-top:8px" data-m="purge">정산과 기록 ${n}건 모두 삭제</button>
+    <div class="btns" style="margin-top:8px"><button class="btn ghost" data-m="x">취소</button></div>`, sheet => {
+    sheet.onclick = e => {
+      const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return;
+      if (m === 'x') return closeModal();
+      commit({ t:'unsettle', id, mode:m });
+      closeModal(); buzz(20); toast(m === 'unlock' ? '정산 취소됨 — 기록이 다시 열렸어요' : '정산과 기록 삭제됨');
+    };
+  });
+}
+/* 목록 길게 누르기 */
+let lpTimer = null, lpFired = false, lpStart = null;
+function bindLongPress(root, sel, fn){
+  root.addEventListener('pointerdown', e => {
+    const el = e.target.closest(sel); if (!el) return;
+    lpFired = false; lpStart = [e.clientX, e.clientY]; el.classList.add('pressing');
+    clearTimeout(lpTimer);
+    lpTimer = setTimeout(() => { lpFired = true; el.classList.remove('pressing'); buzz(30); fn(el); }, 550);
+  });
+  const cancel = () => { clearTimeout(lpTimer); root.querySelectorAll('.pressing').forEach(x => x.classList.remove('pressing')); };
+  root.addEventListener('pointerup', cancel); root.addEventListener('pointercancel', cancel); root.addEventListener('pointerleave', cancel);
+  root.addEventListener('pointermove', e => { if (lpStart && Math.hypot(e.clientX - lpStart[0], e.clientY - lpStart[1]) > 10) cancel(); });
+  root.addEventListener('click', e => { if (lpFired && e.target.closest(sel)) { e.stopImmediatePropagation(); e.preventDefault(); lpFired = false; } }, true);
+  root.addEventListener('contextmenu', e => { if (e.target.closest(sel)) e.preventDefault(); });
+}
+
 async function copyText(txt){
   try { await navigator.clipboard.writeText(txt); return; } catch(e) {}
   const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
@@ -790,6 +846,8 @@ $('#pEntry').addEventListener('click', e => {
   else if (act === 'add') openEdit(null, true);
   else if (act === 'cal') openCalendar(todayStr().slice(0, 7));
 });
+bindLongPress($('#pEntry'), '.rec', el => deleteRecord(el.dataset.id));
+bindLongPress($('#pSettle'), '.block', el => deleteSettlement(el.dataset.id));
 $('#pSettle').addEventListener('click', e => {
   const a = e.target.closest('[data-act]'); if (!a) return;
   if (a.dataset.act === 'settle') doSettle();
